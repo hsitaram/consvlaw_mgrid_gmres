@@ -43,17 +43,18 @@ subroutine finddiffusiveflux(DL,DR,uL,uR,dx,flux)
 
 end subroutine finddiffusiveflux
 !===============================================================
-subroutine findAX(AX,X,vel,dcoeff,reac,dirc_bc_flags,&
+subroutine findAX(AX,X,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 			flux_bc_flags,dircvals,fluxvals,dx,dt,n)
 
       integer, intent(in) :: n
-      real*8, intent(out) :: AX(n)
+      real*8, intent(inout) :: AX(n)
       real*8, intent(in)  :: X(n)
 
       real*8,intent(in)  :: vel(n),dcoeff(n),reac(n)
       real*8,intent(in)  :: dx,dt
       logical,intent(in) :: dirc_bc_flags(2),flux_bc_flags(2)
       real*8, intent(in) :: dircvals(2),fluxvals(2)
+      real*8, intent(in) :: timederivfactor
       
       integer :: i
       real*8 :: flux
@@ -61,9 +62,11 @@ subroutine findAX(AX,X,vel,dcoeff,reac,dirc_bc_flags,&
 
       dx2 = dx*dx
 
-      AX(:) = X(:)/dt
-      AX(1) = X(1)/dt
-      AX(n) = X(n)/dt
+      AX(:) = timederivfactor*X(:)/dt
+      
+      !is the volume half of dx at the boundary?
+      !AX(1) = 0.5*timederivfactor*X(1)/dt
+      !AX(n) = 0.5*timederivfactor*X(n)/dt
 
       !convection and diffusion terms
       do i=1,n-1
@@ -90,27 +93,33 @@ subroutine findAX(AX,X,vel,dcoeff,reac,dirc_bc_flags,&
 	     AX(n)=X(n)
       endif
 
-      !note: for flux bc, the terms go into b and not AX 
+      !note: for flux bc, the terms go into b and not AX
+      
+      !if the volume is half of dx at the boundaries the reac(i)*X(i)
+      !should be 0.5*reac(i)*X(i) 
 
 
 end subroutine findAX
 !===============================================================
-subroutine findrhs(b,xold,source,dirc_bc_flags,flux_bc_flags,dircvals,&
+subroutine findrhs(b,xold,timederivfactor,&
+		source,dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n)
 
       integer, intent(in) :: n
-      real*8, intent(out) :: b(n)
+      real*8, intent(inout) :: b(n)
       real*8, intent(in) :: xold(n),source(n)
       logical, intent(in) :: dirc_bc_flags(2),flux_bc_flags(2)
       real*8, intent(in) :: dircvals(2),fluxvals(2)
       real*8, intent(in) :: dx,dt
+      real*8, intent(in) :: timederivfactor
       integer :: i
 
       do i=1,n
-      	b(i) = xold(i)/dt + source(i)
+      	b(i) = timederivfactor*xold(i)/dt + source(i)
       enddo	
-      b(1) = xold(1)/dt + source(1)
-      b(n) = xold(n)/dt + source(n)
+      !is the volume half of dx at the boundary?
+      !b(1) = 0.5*(timederivfactor*xold(1)/dt + source(1))
+      !b(n) = 0.5*(timederivfactor*xold(n)/dt + source(n))
 
       if(dirc_bc_flags(1) .eqv. .true.) then
 	      b(1) = dircvals(1)
@@ -125,38 +134,43 @@ subroutine findrhs(b,xold,source,dirc_bc_flags,flux_bc_flags,dircvals,&
 	      b(n) = b(n) - fluxvals(2)/(dx)
       endif
 
+      !if the volume is half of dx then the fluxvals should be
+      !divided by 0.5*dx
+
 end subroutine findrhs
 !===============================================================
-subroutine noprecond(MinvX,X,vel,dcoeff,reac,dirc_bc_flags,&
+subroutine noprecond(MinvX,X,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 				flux_bc_flags,dircvals,fluxvals,&
 				dx,dt,n)
       integer, intent(in) :: n
-      real*8, intent(out) :: MinvX(n)
+      real*8, intent(inout) :: MinvX(n)
       real*8, intent(in)  :: X(n)
 	
       logical, intent(in) :: dirc_bc_flags(2),flux_bc_flags(2)
       real*8, intent(in) :: dircvals(2),fluxvals(2)
       real*8,intent(in)  :: vel(n),dcoeff(n),reac(n)
       real*8,intent(in)  :: dx,dt
+      real*8,intent(in)  :: timederivfactor
 
       MinvX = X
 
 end subroutine noprecond
 !===============================================================
-subroutine gauss_seidel_smoothing(res,b,X,vel,dcoeff,reac,&
+subroutine gauss_seidel_smoothing(res,b,X,timederivfactor,vel,dcoeff,reac,&
 		dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n,maxiter)
 
 	integer, intent(in)   :: n
 	real*8, intent(in)    :: b(n)
 	real*8, intent(inout) :: X(n)
-	real*8, intent(out)   :: res(n)
+	real*8, intent(inout)   :: res(n)
 	integer, intent(in) :: maxiter
 
         logical, intent(in) :: dirc_bc_flags(2),flux_bc_flags(2)
         real*8, intent(in) :: dircvals(2),fluxvals(2)
         real*8,intent(in)  :: vel(n),dcoeff(n),reac(n)
         real*8,intent(in)  :: dx,dt
+	real*8,intent(in)  :: timederivfactor
 
 	integer :: i,it
 
@@ -174,13 +188,15 @@ subroutine gauss_seidel_smoothing(res,b,X,vel,dcoeff,reac,&
 	     
 	     do i=1,n
 
-	        diag = -reac(i) + 1.d0/dt
+	        diag = -reac(i) + timederivfactor*1.d0/dt
 
-		if((i .eq. 1) .or. (i .eq. n)) then
-			diag = diag
-		else
-			diag = diag
-		endif
+		!is the volume half of dx at the boundary?
+		!if((i .eq. 1) .or. (i .eq. n)) then
+		!	diag = diag
+		!else
+		!	diag = diag
+		!endif
+
 		offdiag=0.d0
 
 		!right face
@@ -245,7 +261,7 @@ subroutine gauss_seidel_smoothing(res,b,X,vel,dcoeff,reac,&
 		enddo
 	enddo
 
-	call  findAX(AX,X,vel,dcoeff,reac,dirc_bc_flags,&
+	call  findAX(AX,X,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 			flux_bc_flags,dircvals,fluxvals,dx,dt,n)
 
 	res = b - AX 
@@ -287,18 +303,19 @@ subroutine prolong(Xh,X2h,n2h)
 	
 end subroutine prolong
 !===============================================================
-recursive subroutine dovcycle(X,b,vel,dcoeff,reac,&
+recursive subroutine dovcycle(X,b,timederivfactor,vel,dcoeff,reac,&
 		dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n)
 
-	integer, intent(in) :: n
+	integer, intent(in)   :: n
 	real*8, intent(inout) :: X(n)
 	real*8, intent(inout) :: b(n)
         
-	logical, intent(in) :: dirc_bc_flags(2),flux_bc_flags(2)
-        real*8, intent(in) :: dircvals(2),fluxvals(2)
-        real*8,intent(in)  :: vel(n),dcoeff(n),reac(n)
-        real*8,intent(in)  :: dx,dt
+	logical, intent(in)  :: dirc_bc_flags(2),flux_bc_flags(2)
+        real*8, intent(in)   :: dircvals(2),fluxvals(2)
+        real*8, intent(in)   :: vel(n),dcoeff(n),reac(n)
+        real*8 ,intent(in)   :: dx,dt
+	real*8 ,intent(in)   :: timederivfactor
 
 	real*8  :: resh(n)
 	real*8 :: eh(n)
@@ -317,13 +334,13 @@ recursive subroutine dovcycle(X,b,vel,dcoeff,reac,&
 	reach   = reac
 
 	if(n .le. minsize) then
-		call gauss_seidel_smoothing(resh,b,X,velh,dcoeffh,reach,&
+		call gauss_seidel_smoothing(resh,b,X,timederivfactor,velh,dcoeffh,reach,&
 				dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n,1000)
 	else
 
 		!initial smoothing
-		call gauss_seidel_smoothing(resh,b,X,velh,dcoeffh,reach,&
+		call gauss_seidel_smoothing(resh,b,X,timederivfactor,velh,dcoeffh,reach,&
 				dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n,4)
 
@@ -335,7 +352,7 @@ recursive subroutine dovcycle(X,b,vel,dcoeff,reac,&
          	call restriction(velh,vel2h,n/2+1)
 
 		e2h = 0.d0
-		call dovcycle(e2h,res2h,vel2h,dcoeff2h,reac2h,&
+		call dovcycle(e2h,res2h,timederivfactor,vel2h,dcoeff2h,reac2h,&
 				dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,2*dx,dt,n/2+1)
 
@@ -346,32 +363,33 @@ recursive subroutine dovcycle(X,b,vel,dcoeff,reac,&
 		X(:) = X(:) + eh(:)
 
 		!post smooth
-		call gauss_seidel_smoothing(resh,b,X,velh,dcoeffh,reach,&
+		call gauss_seidel_smoothing(resh,b,X,timederivfactor,velh,dcoeffh,reach,&
 				dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n,4)
 	endif
 
 end subroutine dovcycle
 !===============================================================
-subroutine mgridprecond(MinvX,X,vel,dcoeff,reac,dirc_bc_flags,&
+subroutine mgridprecond(MinvX,X,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 				flux_bc_flags,dircvals,fluxvals,&
 				dx,dt,n)
 	
 	integer, intent(in)    :: n
-	real*8, intent(out)    :: MinvX(n)
+	real*8, intent(inout)    :: MinvX(n)
 	real*8, intent(inout)  :: X(n)
 	
 	logical, intent(in) :: dirc_bc_flags(2),flux_bc_flags(2)
         real*8, intent(in) :: dircvals(2),fluxvals(2)
         real*8,intent(in)  :: vel(n),dcoeff(n),reac(n)
         real*8,intent(in)  :: dx,dt
+	real*8,intent(in)  :: timederivfactor
 	
 	integer :: nvcycles,i
 
 	nvcycles=10
 
 	do i=1,nvcycles
-		call dovcycle(MinvX,X,vel,dcoeff,reac,&
+		call dovcycle(MinvX,X,timederivfactor,vel,dcoeff,reac,&
 		dirc_bc_flags,flux_bc_flags,dircvals,&
 				fluxvals,dx,dt,n)
 	enddo

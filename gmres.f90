@@ -39,7 +39,7 @@ contains
 
   end subroutine innerproduct
   !===================================================
-  subroutine arnoldialgorithm(v1,m,n,vel,dcoeff,reac,dirc_bc_flags,&
+  subroutine arnoldialgorithm(v1,m,n,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 		  flux_bc_flags,dircvals,fluxvals,dx,dt,&
 				  Hmat,kspvecs,findAX,precond,lucky)
 
@@ -53,6 +53,7 @@ contains
                   real*8, intent(in)  :: dx,dt
                   logical,intent(in)  :: dirc_bc_flags(2),flux_bc_flags(2)
                   real*8, intent(in)  :: dircvals(2),fluxvals(2)
+		  real*8, intent(in)  :: timederivfactor
 
 		  external :: findAX
 		  external :: precond
@@ -61,7 +62,14 @@ contains
 		  real*8 :: MinvAvj(n)
 		  real*8 :: wj(n)
 		  real*8 :: vi(n),vj(n)
-		  integer :: i,j,k
+		  integer :: i,j
+
+		  !initialize variables
+		  Avj = 0.d0
+		  MinvAvj = 0.d0
+		  wj = 0.d0
+		  vi = 0.d0
+		  vj = 0.d0
 
 		  kspvecs(:,1)=v1
 		  lucky = .false.
@@ -70,9 +78,10 @@ contains
 		  
 	  	        vj = kspvecs(:,j)
 
-			call findAX(Avj,vj,vel,dcoeff,reac,dirc_bc_flags,&
+			call findAX(Avj,vj,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 					flux_bc_flags,dircvals,fluxvals,dx,dt,n)
-			call precond(MinvAvj,Avj,vel,dcoeff,reac,dirc_bc_flags,&
+			call precond(MinvAvj,Avj,timederivfactor,vel,dcoeff,reac,&
+					dirc_bc_flags,&
 					flux_bc_flags,dircvals,fluxvals,&
 					dx,dt,n)
 
@@ -104,7 +113,7 @@ contains
 
 		  integer,intent(in)   :: m
 		  real*8,intent(inout) :: Hmat(m+1,m)
-		  real*8,intent(out)   :: y(m)
+		  real*8,intent(inout)   :: y(m)
 		  real*8,intent(in)    :: beta
 
 		  real*8 :: c,s,h_up,h_down,dtr
@@ -113,7 +122,7 @@ contains
 
 		  integer :: i,j
 
-		  beta_e1(:) = 0.d0
+		  beta_e1    = 0.d0
 		  beta_e1(1) = beta;
 
 		  do i=1,m
@@ -160,21 +169,22 @@ contains
 
   end subroutine leastsquaresminimize
   !===================================================
-  subroutine performgmres(b,x0,x,vel,dcoeff,reac,dirc_bc_flags,flux_bc_flags,&
+  subroutine performgmres(b,x0,x,timederivfactor,vel,dcoeff,reac,&
+				  dirc_bc_flags,flux_bc_flags,&
 				  dircvals,fluxvals,dx,dt,m,n,nrestarts,findAX,precond)
 
-		  integer,intent(in) :: m,n,nrestarts
-		  real*8, intent(in) :: b(n),x0(n)
-		  real*8, intent(out) :: x(n)
+		  integer,intent(in)    :: m,n,nrestarts
+		  real*8, intent(in)    :: b(n),x0(n)
+		  real*8, intent(inout) :: x(n)
 		  external :: findAX, precond
 	          
 		  real*8, intent(in)  :: vel(n),dcoeff(n),reac(n)
                   real*8, intent(in)  :: dx,dt
                   logical,intent(in)  :: dirc_bc_flags(2),flux_bc_flags(2)
                   real*8, intent(in)  :: dircvals(2),fluxvals(2)
-
-		  integer :: i,j,k
-
+		  real*8, intent(in)  :: timederivfactor
+		  
+		  integer :: i,j
 		  real*8 :: r0(n)
 		  real*8 :: Minvr0(n)
 		  real*8 :: Ax0(n),Ax(n)
@@ -188,10 +198,22 @@ contains
 
 		  logical :: lucky
 
-		  call findAX(Ax0,x0,vel,dcoeff,reac,dirc_bc_flags,flux_bc_flags,&
+		  !initialize everything to 0
+		  r0     = 0.d0
+		  Minvr0 = 0.d0
+		  Ax0    = 0.d0
+		  Ax     = 0.d0
+		  r      = 0.d0
+		  v1     = 0.d0
+		  beta   = 0.d0
+		  y      = 0.d0
+		  tol    = 0.d0
+
+		  call findAX(Ax0,x0,timederivfactor,vel,dcoeff,reac,&
+				  dirc_bc_flags,flux_bc_flags,&
 				  dircvals,fluxvals,dx,dt,n)
 		  r0 = b-Ax0
-		  call precond(Minvr0,r0,vel,dcoeff,reac,dirc_bc_flags,&
+		  call precond(Minvr0,r0,timederivfactor,vel,dcoeff,reac,dirc_bc_flags,&
 				  flux_bc_flags,dircvals,fluxvals,dx,dt,n)
 		  r=Minvr0
 		  x=x0
@@ -212,7 +234,8 @@ contains
 
 			v1=r/beta
 
-  			call arnoldialgorithm(v1,m,n,vel,dcoeff,reac,dirc_bc_flags,flux_bc_flags,&
+  			call arnoldialgorithm(v1,m,n,timederivfactor,vel,dcoeff,&
+					reac,dirc_bc_flags,flux_bc_flags,&
 			dircvals,fluxvals,dx,dt,Hmat,kspvectors,findAX,precond,lucky)
 
 			if(lucky .eqv. .true.) then
@@ -226,10 +249,12 @@ contains
 				x=x+y(j)*kspvectors(:,j)
 			enddo
 
-			call findAX(Ax,x,vel,dcoeff,reac,dirc_bc_flags,flux_bc_flags,&
+			call findAX(Ax,x,timederivfactor,vel,dcoeff,reac,&
+					dirc_bc_flags,flux_bc_flags,&
 					dircvals,fluxvals,dx,dt,n)
 			r=b-Ax
-			call precond(Minvr0,r,vel,dcoeff,reac,dirc_bc_flags,&
+			call precond(Minvr0,r,timederivfactor,vel,dcoeff,reac,&
+					dirc_bc_flags,&
 					flux_bc_flags,dircvals,fluxvals,dx,dt,n)
 			r=Minvr0
 		enddo
